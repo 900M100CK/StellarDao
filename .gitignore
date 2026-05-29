@@ -1,0 +1,41 @@
+# ==========================================
+# Stellar Club Treasury (StellarDAO) Git Ignore
+# ==========================================
+
+# Dependencies & Build Outputs
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+build/
+**/build/
+contract/target/
+
+# Environment Variables & Secrets (CRITICAL: Do not commit keys/secrets)
+.env
+.env.*
+*.env
+**/.env
+**/.env.*
+demo/demo_wallets.json
+
+# Local Demo & Documentation/Reports
+demo/
+docs/
+meta/
+worker.log
+*.log
+**/*.log
+
+# AI Agent Configuration & Logs
+.agents/
+.agentkanban/
+.antigravitycli/
+AGENTS.md
+skills-lock.json
+
+# System / IDE Configs
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

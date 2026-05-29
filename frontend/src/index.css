@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', sans-serif;
+  --font-display: 'Outfit', sans-serif;
+
+  /* Custom theme mapping to achieve a gorgeous dark mode */
+  --color-gray-50: #09090b; /* Zinc 950 for main background */
+  --color-white: #121214; /* Zinc 900-ish for cards, header, footer */
+  --color-gray-100: #1d1d21; /* Zinc 800-ish for card borders and secondary bg */
+  --color-gray-200: #1d1d21; /* Zinc 800 */
+  --color-gray-300: #2d2d34; /* Zinc 700 */
+  --color-gray-400: #52525b; /* Zinc 500 */
+  --color-gray-500: #71717a; /* Zinc 400 */
+  --color-gray-600: #a1a1aa; /* Zinc 300 */
+  --color-gray-700: #d4d4d8; /* Zinc 200 */
+  --color-gray-800: #e4e4e7; /* Zinc 100 */
+  --color-gray-900: #f4f4f5; /* Zinc 50 */
+
+  /* Map blue to a sleek, modern Indigo tone */
+  --color-blue-50: #1e1b4b; /* Indigo 950 */
+  --color-blue-100: #312e81; /* Indigo 900 */
+  --color-blue-200: #3730a3; /* Indigo 800 */
+  --color-blue-500: #6366f1; /* Indigo 500 */
+  --color-blue-600: #4f46e5; /* Indigo 600 */
+  --color-blue-700: #4338ca; /* Indigo 700 */
+  --color-blue-800: #3730a3; /* Indigo 800 */
+
+  /* Map yellow to amber/gold */
+  --color-yellow-50: #451a03; /* Amber 950 */
+  --color-yellow-100: #78350f; /* Amber 900 */
+  --color-yellow-400: #d97706; /* Amber 600 */
+  --color-yellow-700: #f59e0b; /* Amber 500 */
+  --color-yellow-800: #fbbf24; /* Amber 400 */
+
+  /* Map red to rose/red */
+  --color-red-50: #450a0a; /* Red 950 */
+  --color-red-100: #7f1d1d; /* Red 900 */
+  --color-red-400: #dc2626; /* Red 600 */
+  --color-red-700: #ef4444; /* Red 500 */
+  --color-red-800: #f87171; /* Red 400 */
+
+  /* Map green to emerald */
+  --color-green-50: #064e3b; /* Emerald 950 */
+  --color-green-100: #065f46; /* Emerald 900 */
+  --color-green-700: #10b981; /* Emerald 500 */
+  --color-green-800: #34d399; /* Emerald 400 */
+}
+
+/* Base custom resets/enhancements */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-gray-50);
+  color: var(--color-gray-800);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+/* Glassmorphism card utilities */
+.glass-card {
+  background: rgba(18, 18, 20, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(63, 63, 70, 0.25);
+}
+
+/* Subtle glow animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(79, 70, 229, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(79, 70, 229, 0.2);
+  }
+}
+
+.glow-indigo {
+  animation: pulse-glow 4s infinite;
+}

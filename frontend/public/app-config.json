@@ -1,0 +1,10 @@
+{
+  "contractId": "CADV4GSYNSBWUBVVBD3DIUKK5BFYK5XVG7NH6O552V5P2PMX4UUDC2CJ",
+  "adminAddress": "GC6GKZAU7SOCYOSJIORSP5HFJTB5ANGIEOQXPKJ7D3NGGRLHAFHGTHVS",
+  "treasurerAddress": "GCOYNJX6LJHMAU5WM4Q2QWDTRGGCMVIIRWFXPIFGZUMQ2KW75ZSNN52W",
+  "tokenAddress": "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+  "rpcUrl": "https://soroban-testnet.stellar.org",
+  "networkPassphrase": "Test SDF Network ; September 2015",
+  "apiUrl": "http://localhost:3001/api",
+  "timeLockSeconds": 10
+}
