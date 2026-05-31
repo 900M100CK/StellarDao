@@ -6,10 +6,6 @@ import { contractService } from '../services/contractService';
 
 const AppContext = createContext();
 
-function getApiUrl() {
-  return getCachedAppConfig()?.apiUrl || import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
-}
-
 function getRoleAddresses() {
   const cfg = getCachedAppConfig();
   return {

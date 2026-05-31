@@ -3,9 +3,7 @@
   "private": true,
   "scripts": {
     "setup-demo": "node scripts/setup-demo.js",
-    "dev:frontend": "npm run dev --prefix frontend",
-    "dev:backend": "npm run start --prefix backend",
-    "dev:worker": "node worker/src/index.js"
+    "dev": "npm run dev --prefix frontend"
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^15.1.0",

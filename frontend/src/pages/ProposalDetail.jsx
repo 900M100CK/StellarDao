@@ -1,35 +1,65 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
 import { useAppContext } from '../context/AppContext';
 import { contractService } from '../services/contractService';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+function getStatusKey(status) {
+  if (!status) return 'unknown';
+  // scValToNative returns contracttype enums as arrays: ["Active"], ["PendingExecution"], etc.
+  if (Array.isArray(status)) {
+    const variant = String(status[0] ?? '');
+    return variant.replace(/([A-Z])/g, (m, p1, offset) => (offset > 0 ? '_' : '') + p1.toLowerCase());
+  }
+  // Fallback: plain string or { Active: null } object shape
+  if (typeof status === 'string') return status.toLowerCase();
+  const key = Object.keys(status)[0];
+  if (!key) return 'unknown';
+  return key.replace(/([A-Z])/g, (m, p1, offset) => (offset > 0 ? '_' : '') + p1.toLowerCase()).replace(/^_/, '');
+}
 
 export default function ProposalDetail() {
   const { id } = useParams();
   const { walletAddress, signTransaction, isAdmin, isTreasurer } = useAppContext();
-  
+
   const [proposal, setProposal] = useState(null);
-  const [votes, setVotes] = useState([]);
+  const [subCategories, setSubCategories] = useState([]);
+  const [memberCount, setMemberCount] = useState(5);
+  const [hasVoted, setHasVoted] = useState(false);
+  const [myVote, setMyVote] = useState(null); // 'Approve' | 'Reject' | null
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
   const [error, setError] = useState('');
   const [now, setNow] = useState(Math.floor(Date.now() / 1000));
 
-  // Admin sub-categories form state
   const [subCats, setSubCats] = useState([{ name: '', amount: '' }]);
 
   const fetchProposal = async () => {
     try {
-      const [propRes, votesRes] = await Promise.all([
-        axios.get(`${API_URL}/proposals/${id}`),
-        axios.get(`${API_URL}/proposals/${id}/votes`)
-      ]);
-      setProposal(propRes.data);
-      setVotes(votesRes.data || []);
+      const addr = typeof walletAddress === 'string' ? walletAddress : walletAddress?.address;
+      const queries = [
+        contractService.query.getProposal(parseInt(id)),
+        contractService.query.getSubCategories(parseInt(id)),
+        contractService.query.getConfig(),
+      ];
+      // Check vote status on-chain if wallet is connected
+      if (addr) {
+        queries.push(contractService.query.getMyVote(parseInt(id), addr));
+      }
+      const [prop, subCatsRaw, cfg, voteChoice] = await Promise.all(queries);
+      if (!prop) {
+        setError('Proposal not found.');
+        return;
+      }
+      setProposal(prop);
+      setSubCategories(Array.isArray(subCatsRaw) ? subCatsRaw : []);
+      if (cfg?.member_count) setMemberCount(Number(cfg.member_count));
+      if (voteChoice !== undefined) {
+        setMyVote(voteChoice);        // 'Approve', 'Reject', or null
+        setHasVoted(voteChoice !== null);
+      }
     } catch (err) {
-      setError('Failed to load proposal data.');
+      setError('Failed to load proposal data from blockchain.');
+      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -44,29 +74,32 @@ export default function ProposalDetail() {
     return () => clearInterval(interval);
   }, [id]);
 
-  if (loading && !proposal) return <div className="text-center py-10">Loading...</div>;
-  if (!proposal) return <div className="text-center py-10 text-red-500">{error}</div>;
+  if (loading && !proposal) return <div className="text-center py-10 text-gray-500">Loading from blockchain...</div>;
+  if (!proposal) return <div className="text-center py-10 text-red-500">{error || 'Proposal not found.'}</div>;
 
   const formatCurrency = (stroops) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'VND' }).format(Number(stroops) / 10000000);
+    const vnd = Number(stroops) / 10_000;
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(vnd);
   };
 
-  const isExpired = now >= proposal.voting_deadline;
-  const hasVoted = votes.some(v => v.voter === walletAddress);
-  
-  // Total members calculation (Mocking DEC-003 threshold context, assuming config is 5 members for demo)
-  const totalMembers = 5; 
-  const approveCount = proposal.yes_votes || 0;
-  const rejectCount = proposal.no_votes || 0;
-  const approvePercent = totalMembers > 0 ? (approveCount / totalMembers) * 100 : 0;
-  const rejectPercent = totalMembers > 0 ? (rejectCount / totalMembers) * 100 : 0;
+  const statusKey = getStatusKey(proposal.status);
+  const votingDeadline = Number(proposal.voting_deadline);
+  const approvedAt = proposal.approved_at !== null && proposal.approved_at !== undefined ? Number(proposal.approved_at) : null;
+  const isExpired = now >= votingDeadline;
+  const approveCount = Number(proposal.yes_votes) || 0;
+  const rejectCount = Number(proposal.no_votes) || 0;
+  const approvePercent = memberCount > 0 ? (approveCount / memberCount) * 100 : 0;
+  const rejectPercent = memberCount > 0 ? (rejectCount / memberCount) * 100 : 0;
+
+  const timeLockSeconds = Number(import.meta.env.VITE_TIME_LOCK_SECONDS || 60);
+  const executionTime = approvedAt ? approvedAt + timeLockSeconds : 0;
+  const isTimeLockActive = now < executionTime;
 
   const handleVote = async (choice) => {
     if (!walletAddress) return setError('Please connect your wallet.');
     try {
       setActionLoading('vote');
-      // 0 for Approve, 1 for Reject
-      await contractService.vote(walletAddress, signTransaction, proposal.proposal_id, choice);
+      await contractService.vote(walletAddress, signTransaction, proposal.id, choice);
       await fetchProposal();
     } catch (err) {
       setError(err.message);
@@ -78,7 +111,7 @@ export default function ProposalDetail() {
   const handleFinalize = async () => {
     try {
       setActionLoading('finalize');
-      await contractService.finalizeVoting(walletAddress, signTransaction, proposal.proposal_id);
+      await contractService.finalizeVoting(walletAddress, signTransaction, proposal.id);
       await fetchProposal();
     } catch (err) {
       setError(err.message);
@@ -90,7 +123,7 @@ export default function ProposalDetail() {
   const handleWithdraw = async (index = 0) => {
     try {
       setActionLoading('withdraw');
-      await contractService.executeWithdrawal(walletAddress, signTransaction, proposal.proposal_id, index);
+      await contractService.executeWithdrawal(walletAddress, signTransaction, proposal.id, index);
       await fetchProposal();
     } catch (err) {
       setError(err.message);
@@ -103,13 +136,12 @@ export default function ProposalDetail() {
     e.preventDefault();
     try {
       setActionLoading('subcats');
-      // Convert amount to stroops
       const formattedCats = subCats.map(c => ({
         name: c.name,
-        amount: Number(c.amount) * 10000000,
+        amount: Number(c.amount) * 10_000_000,
         withdrawn: false
       }));
-      await contractService.setSubCategories(walletAddress, signTransaction, proposal.proposal_id, formattedCats);
+      await contractService.setSubCategories(walletAddress, signTransaction, proposal.id, formattedCats);
       await fetchProposal();
     } catch (err) {
       setError(err.message);
@@ -121,7 +153,7 @@ export default function ProposalDetail() {
   const handleConfirmCompletion = async (subIndex = null) => {
     try {
       setActionLoading(`confirm_${subIndex}`);
-      await contractService.confirmCompletion(walletAddress, signTransaction, proposal.proposal_id, subIndex);
+      await contractService.confirmCompletion(walletAddress, signTransaction, proposal.id, subIndex);
       await fetchProposal();
     } catch (err) {
       setError(err.message);
@@ -130,46 +162,39 @@ export default function ProposalDetail() {
     }
   };
 
-  // Time-lock calculation (24h in prod, maybe 60s in demo. Let's assume approved_at + 86400 or +60 depending on env)
-  const timeLockSeconds = Number(import.meta.env.VITE_TIME_LOCK_SECONDS || 60);
-  const executionTime = proposal.approved_at ? proposal.approved_at + timeLockSeconds : 0;
-  const isTimeLockActive = now < executionTime;
-
-  // Admin window: must submit before time-lock ends
-  const adminWindowRemaining = executionTime - now;
-  const isCriticalWindow = adminWindowRemaining > 0 && adminWindowRemaining < 14400; // 4 hours = 14400s
-
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {error && <div className="bg-red-50 text-red-700 p-4 rounded-lg font-medium shadow-sm border border-red-200">{error}</div>}
 
-      {/* Section 1: Thông tin */}
+      {/* Section 1: Info */}
       <div className="bg-white rounded-xl shadow p-6 border border-gray-100">
         <div className="flex justify-between items-start mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">{proposal.metadata?.title || `Proposal #${proposal.proposal_id}`}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{proposal.title || `Proposal #${proposal.id}`}</h1>
           <span className={`px-3 py-1 rounded-full text-sm font-bold uppercase
-            ${proposal.status === 'active' ? 'bg-blue-100 text-blue-800' :
-              proposal.status === 'pending_execution' ? 'bg-yellow-100 text-yellow-800' :
-              proposal.status === 'executed' ? 'bg-green-100 text-green-800' :
-              'bg-red-100 text-red-800'}`}>
-            {proposal.status}
+            ${
+              statusKey === 'active' ? 'bg-blue-100 text-blue-800' :
+              statusKey === 'pending_execution' ? 'bg-yellow-100 text-yellow-800' :
+              statusKey === 'executed' ? 'bg-green-100 text-green-800' :
+              'bg-red-100 text-red-800'
+            }`}>
+            {statusKey.replace('_', ' ')}
           </span>
         </div>
-        
+
         <div className="grid grid-cols-2 gap-4 mb-6 text-sm">
-          <div><span className="text-gray-500">Creator:</span> <span className="font-medium">{proposal.proposer}</span></div>
-          <div><span className="text-gray-500">Amount:</span> <span className="font-bold text-blue-600">{formatCurrency(proposal.amount)}</span></div>
+          <div><span className="text-gray-500">Creator:</span> <span className="font-medium break-all">{String(proposal.proposer)}</span></div>
+          <div><span className="text-gray-500">Amount:</span> <span className="font-bold text-blue-600">{formatCurrency(Number(proposal.amount))}</span></div>
           <div><span className="text-gray-500">Type:</span> <span className="font-medium">{proposal.is_high_budget ? 'Large Budget (Breakdown required)' : 'Small Budget'}</span></div>
-          <div><span className="text-gray-500">Deadline:</span> <span className="font-medium">{new Date(proposal.voting_deadline * 1000).toLocaleString('en-US')}</span></div>
+          <div><span className="text-gray-500">Deadline:</span> <span className="font-medium">{new Date(votingDeadline * 1000).toLocaleString('en-US')}</span></div>
         </div>
 
         <div className="bg-gray-50 p-4 rounded-lg text-gray-700 whitespace-pre-wrap">
-          {proposal.metadata?.description || 'No description provided.'}
+          {proposal.description || 'No description provided.'}
         </div>
-        
-        {proposal.metadata?.receipt_urls?.[0] && (
+
+        {proposal.receipt_url && (
           <div className="mt-4">
-            <a href={proposal.metadata.receipt_urls[0]} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-sm font-medium">
+            <a href={proposal.receipt_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-sm font-medium">
               📎 View attached document / invoice
             </a>
           </div>
@@ -179,51 +204,71 @@ export default function ProposalDetail() {
       {/* Section 2: Voting Panel */}
       <div className="bg-white rounded-xl shadow p-6 border border-gray-100">
         <h2 className="text-lg font-bold text-gray-800 mb-4">Voting Progress</h2>
-        
+
         <div className="relative w-full bg-gray-200 rounded-full h-6 mb-2 flex overflow-hidden shadow-inner">
           <div className="bg-green-500 h-full transition-all duration-500" style={{ width: `${approvePercent}%` }}></div>
           <div className="bg-red-500 h-full transition-all duration-500" style={{ width: `${rejectPercent}%` }}></div>
-          {/* 2/3 Quorum marker */}
           <div className="absolute top-0 bottom-0 border-l-2 border-white/50 w-0.5" style={{ left: '66.66%' }}>
             <span className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] font-black text-gray-400 whitespace-nowrap">QUORUM 2/3</span>
           </div>
         </div>
         <div className="flex justify-between text-sm text-gray-600 mb-6 pt-2">
           <span className="font-bold text-green-600">Approve: {approveCount}</span>
+          <span className="text-gray-400 text-xs">Total members: {memberCount}</span>
           <span className="font-bold text-red-600">Reject: {rejectCount}</span>
         </div>
 
-        {proposal.status === 'active' && (
+        {statusKey === 'active' && (
           <div className="text-center p-4 border rounded-lg bg-gray-50">
             {!isExpired ? (
               <>
                 <p className="text-lg font-bold text-blue-600 mb-4">
-                  ⏳ Remaining: {Math.max(0, (proposal.voting_deadline - now) / 3600).toFixed(1)} hours
+                  ⏳ Remaining: {Math.max(0, (votingDeadline - now) / 3600).toFixed(1)} hours
                 </p>
-                {!hasVoted ? (
-                  <div className="flex justify-center space-x-4">
-                    <button 
-                      onClick={() => handleVote(0)} disabled={actionLoading === 'vote'}
-                      className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition"
-                    >Approve ✅</button>
-                    <button 
-                      onClick={() => handleVote(1)} disabled={actionLoading === 'vote'}
-                      className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition"
-                    >Reject ❌</button>
+                {!walletAddress ? (
+                  <p className="text-gray-500">Connect wallet to vote.</p>
+                ) : hasVoted ? (
+                  <div className="space-y-2">
+                    <div className={`inline-flex items-center px-4 py-2 rounded-full font-bold text-sm
+                      ${myVote === 'Approve' ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-red-100 text-red-700 border border-red-300'}`}>
+                      {myVote === 'Approve' ? '✅ You voted: Approve' : '❌ You voted: Reject'}
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">Your vote is recorded on-chain and cannot be changed.</p>
                   </div>
                 ) : (
-                  <p className="text-green-600 font-medium">You have already voted on this proposal.</p>
+                  <div className="flex justify-center space-x-4">
+                    <button
+                      onClick={() => handleVote(0)} disabled={actionLoading === 'vote'}
+                      className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition disabled:opacity-50"
+                    >
+                      {actionLoading === 'vote' ? 'Signing...' : 'Approve ✅'}
+                    </button>
+                    <button
+                      onClick={() => handleVote(1)} disabled={actionLoading === 'vote'}
+                      className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white font-bold rounded-lg transition disabled:opacity-50"
+                    >
+                      {actionLoading === 'vote' ? 'Signing...' : 'Reject ❌'}
+                    </button>
+                  </div>
                 )}
               </>
             ) : (
               <>
                 <p className="text-lg font-bold text-red-600 mb-4">⚠️ Voting period has ended</p>
-                <button 
-                  onClick={handleFinalize} disabled={actionLoading === 'finalize'}
-                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition"
-                >
-                  {actionLoading === 'finalize' ? 'Processing...' : 'Finalize Voting Results'}
-                </button>
+                {hasVoted && (
+                  <div className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-bold mb-3
+                    ${myVote === 'Approve' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                    {myVote === 'Approve' ? '✅ You voted: Approve' : '❌ You voted: Reject'}
+                  </div>
+                )}
+                <div>
+                  <button
+                    onClick={handleFinalize} disabled={actionLoading === 'finalize'}
+                    className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition"
+                  >
+                    {actionLoading === 'finalize' ? 'Processing...' : 'Finalize Voting Results'}
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -231,10 +276,9 @@ export default function ProposalDetail() {
       </div>
 
       {/* Section 3: Time-lock & Execution */}
-      {proposal.status === 'pending_execution' && (
+      {statusKey === 'pending_execution' && (
         <div className="bg-white rounded-xl shadow p-6 border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4">Disbursement & Execution</h2>
-          
           <div className="text-center p-4 border rounded-lg bg-gray-50">
             {isTimeLockActive ? (
               <p className="text-lg font-bold text-orange-600">
@@ -245,14 +289,14 @@ export default function ProposalDetail() {
                 <p className="text-lg font-bold text-green-600 mb-4">🔓 Ready for disbursement</p>
                 {isTreasurer ? (
                   !proposal.is_high_budget ? (
-                    <button 
+                    <button
                       onClick={() => handleWithdraw(0)} disabled={actionLoading === 'withdraw'}
                       className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition disabled:bg-gray-400"
                     >
                       {actionLoading === 'withdraw' ? 'Executing...' : 'Execute Withdrawal'}
                     </button>
                   ) : (
-                    <p className="text-sm text-blue-600 font-medium">Large budget: Please withdraw by sub-categories in the list below.</p>
+                    <p className="text-sm text-blue-600 font-medium">Large budget: Please withdraw by sub-categories below.</p>
                   )
                 ) : (
                   <p className="text-sm text-gray-500">Only the Treasurer can execute withdrawals.</p>
@@ -266,22 +310,22 @@ export default function ProposalDetail() {
         </div>
       )}
 
-      {/* Section 4: Admin Sub-categories & Confirmations */}
-      {(proposal.is_high_budget || proposal.status === 'executed') && (
+      {/* Section 4: Sub-categories */}
+      {(proposal.is_high_budget || statusKey === 'executed') && (
         <div className="bg-white rounded-xl shadow p-6 border border-gray-100">
           <h2 className="text-lg font-bold text-gray-800 mb-4">Sub-budget Management & Confirmations</h2>
-          
-          {proposal.is_high_budget && proposal.status === 'pending_execution' && !proposal.sub_categories_locked && isAdmin && (
+
+          {proposal.is_high_budget && statusKey === 'pending_execution' && !proposal.sub_categories_locked && isAdmin && (
             <form onSubmit={handleSetSubCategories} className="space-y-4 mb-6">
               <h3 className="font-medium text-gray-700">Admin: Declare disbursement categories</h3>
               {subCats.map((cat, idx) => (
                 <div key={idx} className="flex space-x-2">
-                  <input 
+                  <input
                     type="text" placeholder="Category Name" required value={cat.name}
                     onChange={(e) => { const n = [...subCats]; n[idx].name = e.target.value; setSubCats(n); }}
                     className="flex-1 border p-2 rounded"
                   />
-                  <input 
+                  <input
                     type="number" placeholder="Amount (VND)" required value={cat.amount}
                     onChange={(e) => { const n = [...subCats]; n[idx].amount = e.target.value; setSubCats(n); }}
                     className="flex-1 border p-2 rounded"
@@ -296,22 +340,22 @@ export default function ProposalDetail() {
             </form>
           )}
 
-          {proposal.sub_categories_locked && proposal.sub_categories && (
+          {proposal.sub_categories_locked && subCategories.length > 0 && (
             <div className="space-y-3">
               <h3 className="font-medium text-gray-700">Category list (Locked):</h3>
-              {proposal.sub_categories.map((cat, idx) => (
+              {subCategories.map((cat, idx) => (
                 <div key={idx} className="flex justify-between items-center p-3 bg-gray-50 border rounded">
                   <div>
                     <p className="font-bold">{cat.name}</p>
-                    <p className="text-sm text-gray-500">{formatCurrency(cat.amount)}</p>
+                    <p className="text-sm text-gray-500">{formatCurrency(Number(cat.amount))}</p>
                   </div>
                   <div>
                     {cat.withdrawn ? (
                       <div className="flex space-x-2">
                         <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">Withdrawn</span>
                         {isAdmin && (
-                          <button 
-                            onClick={() => handleConfirmCompletion(idx)} 
+                          <button
+                            onClick={() => handleConfirmCompletion(idx)}
                             className="px-2 py-1 bg-blue-600 text-white text-xs rounded"
                           >Confirm Completion (+1 Rep)</button>
                         )}
@@ -320,8 +364,8 @@ export default function ProposalDetail() {
                       <div className="flex space-x-2">
                         <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs rounded">Not disbursed</span>
                         {isTreasurer && !isTimeLockActive && (
-                          <button 
-                            onClick={() => handleWithdraw(idx)} 
+                          <button
+                            onClick={() => handleWithdraw(idx)}
                             disabled={actionLoading === 'withdraw'}
                             className="px-2 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700"
                           >Withdraw</button>
@@ -334,13 +378,13 @@ export default function ProposalDetail() {
             </div>
           )}
 
-          {!proposal.is_high_budget && proposal.status === 'executed' && isAdmin && (
-             <div className="mt-4 p-4 border rounded bg-gray-50 text-center">
-               <button 
-                  onClick={() => handleConfirmCompletion(null)}
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded"
-                >Confirm Completion (+1 Rep for Proposer)</button>
-             </div>
+          {!proposal.is_high_budget && statusKey === 'executed' && isAdmin && (
+            <div className="mt-4 p-4 border rounded bg-gray-50 text-center">
+              <button
+                onClick={() => handleConfirmCompletion(null)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded"
+              >Confirm Completion (+1 Rep for Proposer)</button>
+            </div>
           )}
         </div>
       )}

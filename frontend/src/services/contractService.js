@@ -165,13 +165,15 @@ export const contractService = {
     return buildAndSubmitTransaction(address, signTransaction, 'deposit', args);
   },
 
-  createProposal: async (address, signTransaction, amount, descHash, receiptHash, votingDeadline) => {
+  createProposal: async (address, signTransaction, amount, title, descHash, receiptHash, votingDeadline) => {
+    const safeTitle = title || '';
     const safeDescHash = descHash || '';
     const safeReceiptHash = receiptHash || '';
 
     const args = [
       toAddressScVal(address),
       nativeToScVal(BigInt(amount), { type: 'i128' }),
+      nativeToScVal(safeTitle, { type: 'string' }),
       nativeToScVal(safeDescHash, { type: 'string' }),
       nativeToScVal(safeReceiptHash, { type: 'string' }),
       nativeToScVal(BigInt(votingDeadline), { type: 'u64' }),
@@ -184,22 +186,22 @@ export const contractService = {
     const choiceScVal = xdr.ScVal.scvVec([xdr.ScVal.scvSymbol(choiceVariant)]);
     const args = [
       toAddressScVal(address),
-      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
+      nativeToScVal(Number(proposalId), { type: 'u32' }),  // contract: proposal_id: u32
       choiceScVal,
     ];
     return buildAndSubmitTransaction(address, signTransaction, 'vote', args);
   },
 
   finalizeVoting: async (address, signTransaction, proposalId) => {
-    const args = [nativeToScVal(BigInt(proposalId), { type: 'u64' })];
+    const args = [nativeToScVal(Number(proposalId), { type: 'u32' })];
     return buildAndSubmitTransaction(address, signTransaction, 'finalize_voting', args);
   },
 
   executeWithdrawal: async (address, signTransaction, proposalId, subCategoryIndex = 0) => {
     const args = [
       toAddressScVal(address),
-      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
-      nativeToScVal(subCategoryIndex, { type: 'u32' }),
+      nativeToScVal(Number(proposalId), { type: 'u32' }),  // contract: proposal_id: u32
+      nativeToScVal(Number(subCategoryIndex), { type: 'u32' }),
     ];
     return buildAndSubmitTransaction(address, signTransaction, 'execute_withdrawal', args);
   },
@@ -215,7 +217,7 @@ export const contractService = {
 
     const args = [
       toAddressScVal(address),
-      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
+      nativeToScVal(Number(proposalId), { type: 'u32' }),  // contract: proposal_id: u32
       nativeToScVal(scCategories),
     ];
     return buildAndSubmitTransaction(address, signTransaction, 'set_sub_categories', args);
@@ -223,11 +225,11 @@ export const contractService = {
 
   confirmCompletion: async (address, signTransaction, proposalId, subCategoryIndex = null) => {
     const subCatScVal = subCategoryIndex !== null
-      ? nativeToScVal(subCategoryIndex, { type: 'u32' })
-      : nativeToScVal(null); 
+      ? nativeToScVal(Number(subCategoryIndex), { type: 'u32' })
+      : nativeToScVal(null);
     const args = [
       toAddressScVal(address),
-      nativeToScVal(BigInt(proposalId), { type: 'u64' }),
+      nativeToScVal(Number(proposalId), { type: 'u32' }),  // contract: proposal_id: u32
       subCatScVal,
     ];
     return buildAndSubmitTransaction(address, signTransaction, 'confirm_completion', args);
@@ -329,6 +331,170 @@ export const contractService = {
       const result = await rpcServer.simulateTransaction(tx);
       if (result.error) throw new Error(result.error);
       return scValToNative(result.result.retval);
+    },
+
+    getProposal: async (proposalId) => {
+      const { config, server: rpcServer } = await getRuntime();
+      const dummySource = new Account(
+        config.adminAddress || import.meta.env.VITE_ADMIN_ADDRESS,
+        '0'
+      );
+      const tx = new TransactionBuilder(dummySource, {
+        fee: '100',
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: config.contractId,
+            function: 'get_proposal',
+            args: [nativeToScVal(Number(proposalId), { type: 'u32' })],
+          })
+        )
+        .setTimeout(0)
+        .build();
+
+      const result = await rpcServer.simulateTransaction(tx);
+      if (result.error) throw new Error(result.error);
+      return scValToNative(result.result.retval);
+    },
+
+    getAllProposals: async () => {
+      const { config, server: rpcServer } = await getRuntime();
+      const dummySource = new Account(
+        config.adminAddress || import.meta.env.VITE_ADMIN_ADDRESS,
+        '0'
+      );
+      const tx = new TransactionBuilder(dummySource, {
+        fee: '100',
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: config.contractId,
+            function: 'get_all_proposals',
+            args: [],
+          })
+        )
+        .setTimeout(0)
+        .build();
+
+      const result = await rpcServer.simulateTransaction(tx);
+      if (result.error) throw new Error(result.error);
+      return scValToNative(result.result.retval) || [];
+    },
+
+    getTreasuryBalance: async () => {
+      const { config, server: rpcServer } = await getRuntime();
+      const dummySource = new Account(
+        config.adminAddress || import.meta.env.VITE_ADMIN_ADDRESS,
+        '0'
+      );
+      const tx = new TransactionBuilder(dummySource, {
+        fee: '100',
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: config.contractId,
+            function: 'get_treasury_balance',
+            args: [],
+          })
+        )
+        .setTimeout(0)
+        .build();
+
+      const result = await rpcServer.simulateTransaction(tx);
+      if (result.error) throw new Error(result.error);
+      const raw = scValToNative(result.result.retval);
+      return typeof raw === 'bigint' ? raw.toString() : String(raw || '0');
+    },
+
+    getSubCategories: async (proposalId) => {
+      const { config, server: rpcServer } = await getRuntime();
+      const dummySource = new Account(
+        config.adminAddress || import.meta.env.VITE_ADMIN_ADDRESS,
+        '0'
+      );
+      const tx = new TransactionBuilder(dummySource, {
+        fee: '100',
+        networkPassphrase: config.networkPassphrase,
+      })
+        .addOperation(
+          Operation.invokeContractFunction({
+            contract: config.contractId,
+            function: 'get_sub_categories',
+            args: [nativeToScVal(Number(proposalId), { type: 'u32' })],
+          })
+        )
+        .setTimeout(0)
+        .build();
+
+      const result = await rpcServer.simulateTransaction(tx);
+      if (result.error) throw new Error(result.error);
+      return scValToNative(result.result.retval) || [];
+    },
+
+    // Check if a voter has already voted on a proposal by reading DataKey::Vote(proposal_id, voter)
+    // from persistent ledger storage directly — no database needed.
+    hasVoted: async (proposalId, voterAddress) => {
+      const { config, server: rpcServer } = await getRuntime();
+      try {
+        const normalized = normalizePublicKey(voterAddress);
+        if (!normalized) return false;
+
+        // Build the DataKey::Vote(proposal_id, voter) ledger key
+        // DataKey enum: Vote is variant index 1
+        const voteKey = xdr.ScVal.scvVec([
+          xdr.ScVal.scvSymbol('Vote'),
+          nativeToScVal(Number(proposalId), { type: 'u32' }),
+          Address.fromString(normalized).toScVal(),
+        ]);
+
+        const ledgerKey = xdr.LedgerKey.contractData(
+          new xdr.LedgerKeyContractData({
+            contract: new Address(config.contractId).toScAddress(),
+            key: voteKey,
+            durability: xdr.ContractDataDurability.persistent(),
+          })
+        );
+
+        const res = await rpcServer.getLedgerEntries(ledgerKey);
+        return res.entries && res.entries.length > 0;
+      } catch {
+        return false;
+      }
+    },
+
+    // Get the voter's choice: returns 'Approve', 'Reject', or null if not voted
+    getMyVote: async (proposalId, voterAddress) => {
+      const { config, server: rpcServer } = await getRuntime();
+      try {
+        const normalized = normalizePublicKey(voterAddress);
+        if (!normalized) return null;
+
+        const voteKey = xdr.ScVal.scvVec([
+          xdr.ScVal.scvSymbol('Vote'),
+          nativeToScVal(Number(proposalId), { type: 'u32' }),
+          Address.fromString(normalized).toScVal(),
+        ]);
+
+        const ledgerKey = xdr.LedgerKey.contractData(
+          new xdr.LedgerKeyContractData({
+            contract: new Address(config.contractId).toScAddress(),
+            key: voteKey,
+            durability: xdr.ContractDataDurability.persistent(),
+          })
+        );
+
+        const res = await rpcServer.getLedgerEntries(ledgerKey);
+        if (!res.entries || res.entries.length === 0) return null;
+        const val = scValToNative(res.entries[0].val.contractData().val());
+        // VoteChoice enum: { Approve: null } or { Reject: null }
+        if (!val) return null;
+        return Object.keys(val)[0]; // 'Approve' or 'Reject'
+      } catch {
+        return null;
+      }
     },
   },
 };

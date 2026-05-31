@@ -2,13 +2,11 @@ const { Keypair, rpc, Networks } = require('@stellar/stellar-sdk');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { MongoClient } = require(path.join(__dirname, '../worker/node_modules/mongodb'));
 require('dotenv').config();
 
 const RPC_URL = 'https://soroban-testnet.stellar.org';
 const server = new rpc.Server(RPC_URL);
 const networkPassphrase = Networks.TESTNET;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/stellar_treasury';
 
 const stellarEnv = {
   ...process.env,
@@ -32,24 +30,6 @@ async function fundAccount(publicKey) {
     const res = await fetch(`https://friendbot.stellar.org?addr=${encodeURIComponent(publicKey)}`);
     if (!res.ok) throw new Error(`Friendbot retry failed with status ${res.status}`);
     console.log(`Funded ${publicKey} successfully on retry.`);
-  }
-}
-
-async function resetDemoCache() {
-  const client = new MongoClient(MONGODB_URI);
-  try {
-    await client.connect();
-    const db = client.db();
-    const collections = ['proposals', 'votes', 'members', 'transactions', 'sub_categories', 'sync_meta', 'stats', 'proposal_metadata'];
-    for (const name of collections) {
-      const exists = await db.listCollections({ name }).hasNext();
-      if (exists) {
-        await db.collection(name).deleteMany({});
-        console.log(`Cleared collection: ${name}`);
-      }
-    }
-  } finally {
-    await client.close();
   }
 }
 
@@ -79,7 +59,6 @@ VITE_TOKEN_ADDRESS=${nativeTokenAddress}
 VITE_STRICT_MODE=false
 VITE_RPC_URL=${RPC_URL}
 VITE_NETWORK_PASSPHRASE="${networkPassphrase}"
-VITE_API_URL=http://localhost:3001/api
 VITE_TIME_LOCK_SECONDS=10`;
 
   fs.writeFileSync(path.join(root, '.env.demo'), envDemo);
@@ -88,17 +67,6 @@ VITE_TIME_LOCK_SECONDS=10`;
 `;
   fs.writeFileSync(path.join(root, 'frontend', '.env'), frontendEnv);
 
-  const workerEnv = `CONTRACT_ID=${contractId}
-SOROBAN_RPC_URL=${RPC_URL}
-HORIZON_URL=https://horizon-testnet.stellar.org
-MONGODB_URI=${MONGODB_URI}
-NETWORK_PASSPHRASE=${networkPassphrase}
-SYNC_START_LEDGER=${syncStartLedger}
-SYNC_LOOKBACK_LEDGERS=200000
-POLL_INTERVAL_MS=5000
-LOG_LEVEL=info`;
-  fs.writeFileSync(path.join(root, 'worker', '.env'), workerEnv);
-
   const appConfig = {
     contractId,
     adminAddress: publicKeys.admin,
@@ -106,7 +74,6 @@ LOG_LEVEL=info`;
     tokenAddress: nativeTokenAddress,
     rpcUrl: RPC_URL,
     networkPassphrase,
-    apiUrl: 'http://localhost:3001/api',
     timeLockSeconds: 10,
   };
   fs.writeFileSync(
@@ -114,7 +81,7 @@ LOG_LEVEL=info`;
     JSON.stringify(appConfig, null, 2)
   );
 
-  console.log('\nSynced env files: .env.demo, frontend/.env, worker/.env, frontend/public/app-config.json');
+  console.log('\nSynced env files: .env.demo, frontend/.env, frontend/public/app-config.json');
   console.log('SYNC_START_LEDGER:', syncStartLedger);
 }
 
@@ -206,16 +173,13 @@ async function setupDemo() {
     if (fs.existsSync(whitelistPath)) fs.unlinkSync(whitelistPath);
   }
 
-  console.log('\nResetting MongoDB demo cache...');
-  await resetDemoCache();
-
   const syncStartLedger = await findContractInitLedger(contractId);
   writeEnvFiles({ contractId, publicKeys, nativeTokenAddress, syncStartLedger });
 
   console.log('\n=== SETUP COMPLETE ===');
   console.log('Contract ID:', contractId);
   console.log('Import demo/demo_wallets.json secrets into Freighter (Testnet).');
-  console.log('Restart worker + backend + frontend, then follow demo/scenario.md');
+  console.log('Follow demo/scenario.md');
 }
 
 setupDemo().catch((err) => {
